@@ -1,0 +1,702 @@
+cd ~/ros2_ws/src
+chmod +x ras598_assignment_2/planner_node.py
+colcon build --packages-select ras598_assignment_2
+source install/setup.bash
+
+Run your node (test)
+ros2 run ras598_assignment_2 planner_node
+Run using launch file
+ros2 launch ras598_assignment_2 planner_launch.py
+
+In a new terminal
+cd ros2_ws
+source install/setup.bash
+ros2 launch stage_ros2 stage.launch.py world:=cave
+
+In a new terminal
+rviz2 -d "/home/eva/Downloads/Git Repo/planning.rviz"
+
+--------------------Asked Chatgpt to give BigPicture---------------------------
+Your package works like a pipeline:
+
+planner_launch.py starts everything
+planner_node.py is the main coordinator
+task_client.py gets start and goal from /get_task
+planner_core.py loads the map, builds the planning grid, inflates obstacles, runs A*, and prunes the path
+controller.py converts the current waypoint into a Twist command
+marker_helper.py builds RViz markers so you can see what the planner is doing
+
+So the central idea is:
+
+launch file → planner node → helper modules
+
+Folder structure
+
+You likely have something like this:
+
+ras598_assignment_2/
+├── launch/
+│   └── planner_launch.py
+├── ras598_assignment_2/
+│   ├── __init__.py
+│   ├── planner_node.py
+│   ├── task_client.py
+│   ├── planner_core.py
+│   ├── controller.py
+│   └── marker_helper.py
+├── resource/
+│   └── ras598_assignment_2
+├── package.xml
+├── setup.py
+└── setup.cfg
+File-by-file explanation
+1. planner_launch.py
+Purpose
+
+This file starts the ROS 2 system.
+
+What it launches
+nav2_map_server
+lifecycle manager for map_server
+grading_scout.py
+your planner_node
+Why it matters
+
+Without this file, the map server and grader would not start automatically, and your node would not run in the correct assignment environment.
+
+Main function
+generate_launch_description()
+What it does
+finds package files like map.yaml and cave_filled.png
+launches the map server
+activates it with lifecycle manager
+runs the grading script
+runs your planner node
+Who calls it
+
+You call it from terminal with:
+
+ros2 launch ras598_assignment_2 planner_launch.py
+2. planner_node.py
+Purpose
+
+This is the main brain of the package.
+
+It handles:
+
+ROS publishers/subscribers
+task request
+planning trigger
+path following
+state machine
+marker publishing
+This is the most important file
+
+Everything connects through this file.
+
+Main class
+class PlannerNode(Node)
+Main functions inside it
+__init__()
+
+Sets up everything:
+
+publishers
+subscribers
+timers
+helper objects
+state variables
+
+It creates instances of:
+
+TaskClient
+PlannerCore
+PathController
+
+So this file is the one that calls the other Python helper files.
+
+startup_step()
+
+This runs once after startup and triggers the /get_task request.
+
+send_task_request()
+
+Uses TaskClient to send the Trigger service request.
+
+handle_task_response(future)
+
+Reads the service response and stores:
+
+self.start_world
+self.goal_world
+
+Then moves the node into the PLANNING state.
+
+ground_truth_callback(msg)
+
+Stores robot pose from /ground_truth.
+
+This gives:
+
+current x
+current y
+current yaw
+energy_callback(msg)
+
+Stores the latest /energy_consumed.
+
+plan_mission()
+
+This is the function where planner_node.py calls planner_core.py.
+
+It does:
+
+prepare_map()
+world_to_grid()
+astar_search()
+prune_path()
+cells_to_world_path()
+
+So this is the place where the planner is actually built.
+
+control_loop()
+
+This is the main timer callback.
+
+It acts like a state machine:
+
+WAITING_FOR_TASK
+PLANNING
+WAITING_FOR_POSE
+TRACKING_PATH
+GOAL_REACHED
+FAILED
+
+This function decides what the robot should do at every moment.
+
+advance_waypoint_if_needed()
+
+Checks if the robot is close enough to the current waypoint.
+If yes, it moves to the next waypoint.
+
+get_current_target_waypoint()
+
+Returns the waypoint the controller should currently follow.
+
+stop_robot()
+
+Publishes zero velocity.
+
+publish_visualization()
+
+Calls build_marker_array() from marker_helper.py and publishes the markers.
+
+quaternion_to_yaw()
+
+Converts odometry orientation into yaw angle.
+
+main()
+
+Standard ROS 2 Python entry point.
+
+Who calls planner_node.py
+ROS launch starts it
+inside this file, it calls all the helper files
+
+So this is the hub of the package.
+
+3. task_client.py
+Purpose
+
+This file handles just one job:
+
+call /get_task and parse the result
+
+It keeps service logic separate from the node logic.
+
+Main class
+class TaskClient
+Main functions
+__init__(node, service_name='/get_task')
+
+Creates the Trigger service client.
+
+wait_for_service(timeout_sec=1.0)
+
+Checks whether /get_task is available.
+
+send_request()
+
+Sends the Trigger request asynchronously.
+
+parse_task_message(message)
+
+Takes a string like:
+
+"-7.0,-7.0,7.0,2.5"
+
+and converts it to:
+
+start_world = (-7.0, -7.0)
+goal_world = (7.0, 2.5)
+Who calls it
+
+planner_node.py calls it.
+
+Typical flow:
+
+self.task_client_helper = TaskClient(self, '/get_task')
+future = self.task_client_helper.send_request()
+start_world, goal_world = self.task_client_helper.parse_task_message(response.message)
+4. planner_core.py
+Purpose
+
+This file contains the actual planning algorithms.
+
+It does not deal with ROS directly.
+It only deals with:
+
+map
+grid
+path planning
+pruning
+coordinate conversion
+
+That makes it easy to explain and debug.
+
+Main class
+class PlannerCore
+Major functions
+__init__(...)
+
+Stores planning settings:
+
+map path
+map origin
+original resolution
+planning resolution
+inflation radius
+load_map_bitmap()
+
+Loads cave_filled.png.
+
+threshold_bitmap_to_binary(image)
+
+Converts grayscale image into:
+
+occupied = 1
+free = 0
+build_planning_grid(binary_image)
+
+Builds a coarse occupancy grid at 0.2 m/cell.
+
+This is the downsampling step.
+
+inflate_obstacles(occupancy_grid)
+
+Makes obstacles larger by 0.7 m.
+
+This produces the inflated grid used for safe planning.
+
+prepare_map()
+
+Runs the whole map pipeline:
+
+load image
+threshold
+build grid
+inflate
+world_to_grid(x, y)
+
+Converts world coordinates into a grid cell.
+
+Used for:
+
+start
+goal
+grid_to_world(row, col)
+
+Converts a grid cell back to world coordinates.
+
+Used to turn path cells into waypoints.
+
+is_in_bounds(cell, grid)
+
+Checks if a cell is inside the map.
+
+is_occupied(cell, grid)
+
+Checks if cell is occupied.
+
+is_free(cell, grid)
+
+Checks if cell is valid and free.
+
+heuristic(cell, goal)
+
+Euclidean distance for A*.
+
+get_neighbors(cell, grid)
+
+Returns 8-connected neighbors.
+
+reconstruct_path(came_from, goal_cell)
+
+Builds the final path after A* finds the goal.
+
+astar_search(start_cell, goal_cell, grid)
+
+Runs A* on the inflated grid.
+
+Returns raw path as grid cells.
+
+line_of_sight(cell_a, cell_b, grid)
+
+Checks whether two cells can be connected directly without collision.
+
+prune_path(path_cells, grid)
+
+Uses line-of-sight to remove unnecessary intermediate waypoints.
+
+cells_to_world_path(path_cells)
+
+Converts grid path into world-coordinate waypoints.
+
+Who calls it
+
+planner_node.py calls it in plan_mission().
+
+Typical flow:
+
+self.planner_core.prepare_map()
+self.start_cell = self.planner_core.world_to_grid(...)
+self.goal_cell = self.planner_core.world_to_grid(...)
+self.raw_path_cells = self.planner_core.astar_search(...)
+self.pruned_path_cells = self.planner_core.prune_path(...)
+self.pruned_path_world = self.planner_core.cells_to_world_path(...)
+5. controller.py
+Purpose
+
+This file handles motion control.
+
+It turns:
+
+robot pose
+current waypoint
+
+into:
+
+/cmd_vel command
+Main class
+class PathController
+Main functions
+__init__(...)
+
+Stores controller tuning parameters like:
+
+linear speed
+angular gain
+max speeds
+tolerances
+heading threshold
+normalize_angle(angle)
+
+Wraps angle into [-pi, pi].
+
+Very important for turning correctly.
+
+clamp(value, min_value, max_value)
+
+Keeps speed values within safe limits.
+
+distance_to_point(...)
+
+Distance from robot to waypoint.
+
+heading_to_point(...)
+
+Desired heading angle toward waypoint.
+
+waypoint_reached(...)
+
+Checks if intermediate waypoint is reached.
+
+goal_reached(...)
+
+Checks if final goal is reached.
+
+make_stop_cmd()
+
+Returns zero Twist.
+
+compute_cmd(current_x, current_y, current_yaw, target_x, target_y)
+
+Main controller logic.
+
+It does:
+
+compute heading error
+rotate first if angle is large
+otherwise move forward and steer
+reduce jitter with deadband
+limit max speeds
+Who calls it
+
+planner_node.py calls it during TRACKING_PATH state.
+
+Example:
+
+cmd = self.path_controller.compute_cmd(
+    self.current_pose_x,
+    self.current_pose_y,
+    self.current_yaw,
+    current_target_world[0],
+    current_target_world[1]
+)
+
+Then planner_node.py publishes that command.
+
+6. marker_helper.py
+Purpose
+
+This file builds all RViz markers.
+
+It is purely for visualization.
+
+Why it exists
+
+Without this file, planner_node.py would become cluttered with long marker-building code.
+
+Main helper functions
+make_point(x, y, z=0.0)
+
+Creates a geometry_msgs/Point.
+
+make_base_marker(marker_id, namespace, frame_id='map')
+
+Creates a marker with shared default settings.
+
+make_start_marker(start_xy, frame_id='map')
+
+Creates start marker.
+
+make_goal_marker(goal_xy, frame_id='map')
+
+Creates goal marker.
+
+make_raw_path_marker(path_world, frame_id='map')
+
+Creates line strip for raw path.
+
+make_pruned_path_marker(path_world, frame_id='map')
+
+Creates line strip for final pruned path.
+
+make_target_marker(target_xy, frame_id='map')
+
+Creates marker for current active waypoint.
+
+make_robot_marker(robot_xy, frame_id='map')
+
+Creates marker for current robot position.
+
+build_marker_array(...)
+
+Builds one MarkerArray containing all available markers.
+
+This is the main function planner_node.py actually uses.
+
+Who calls it
+
+planner_node.py calls:
+
+build_marker_array(...)
+
+inside publish_visualization().
+
+How the files call each other
+
+Here is the actual dependency flow:
+
+planner_launch.py
+    └── launches planner_node
+
+planner_node.py
+    ├── uses TaskClient from task_client.py
+    ├── uses PlannerCore from planner_core.py
+    ├── uses PathController from controller.py
+    └── uses build_marker_array from marker_helper.py
+
+So:
+
+planner_launch.py calls planner_node.py
+planner_node.py calls everything else
+helper files do not call each other directly
+
+That is a very clean modular architecture.
+
+Full runtime flow
+
+This is what happens when you run the package.
+
+Step 1: Launch
+
+You run:
+
+ros2 launch ras598_assignment_2 planner_launch.py
+
+This starts:
+
+map server
+lifecycle manager
+grading scout
+planner node
+Step 2: Planner node starts
+
+planner_node.py initializes:
+
+publishers
+subscribers
+timers
+helper classes
+
+State becomes:
+
+WAITING_FOR_TASK
+Step 3: Task request
+
+startup_step() calls TaskClient.
+
+task_client.py:
+
+waits for /get_task
+sends Trigger request
+parses response message
+
+Then planner_node.py stores:
+
+start_world
+goal_world
+
+State becomes:
+
+PLANNING
+Step 4: Map preparation and path planning
+
+planner_node.py calls plan_mission().
+
+Inside that:
+
+planner_core.prepare_map()
+world_to_grid()
+astar_search()
+prune_path()
+cells_to_world_path()
+
+Now the node has:
+
+raw path
+pruned path
+waypoint list
+
+If pose is not available yet:
+state becomes:
+
+WAITING_FOR_POSE
+
+Otherwise:
+
+TRACKING_PATH
+Step 5: Pose updates
+
+/ground_truth messages arrive.
+
+ground_truth_callback() stores:
+
+x
+y
+yaw
+Step 6: Path tracking
+
+During TRACKING_PATH:
+
+planner_node.py chooses current waypoint
+controller.py computes Twist
+planner_node.py publishes /cmd_vel
+
+At the same time:
+
+marker_helper.py builds RViz markers
+planner_node.py publishes /planner_markers
+Step 7: Goal reached
+
+When final goal tolerance is satisfied:
+
+state becomes GOAL_REACHED
+robot is stopped
+markers keep showing final result
+What data lives where
+In planner_node.py
+
+High-level mission state:
+
+current pose
+energy
+task
+path
+state machine
+waypoint index
+In task_client.py
+
+Service request and parsing logic.
+
+In planner_core.py
+
+Map data and planning algorithms.
+
+In controller.py
+
+Control parameters and control logic.
+
+In marker_helper.py
+
+Visualization creation only.
+
+Best way to think about editing in VS Code
+
+When you open the package in VS Code, think like this:
+
+If task/service is failing
+
+Go to:
+
+task_client.py
+planner_node.py
+If map/grid/path is wrong
+
+Go to:
+
+planner_core.py
+If robot motion is bad
+
+Go to:
+
+controller.py
+If RViz markers are wrong
+
+Go to:
+
+marker_helper.py
+If launch is failing
+
+Go to:
+
+planner_launch.py
+If high-level flow is wrong
+
+Go to:
+
+planner_node.py
+Quick summary in one paragraph
+
+planner_launch.py starts the full assignment system. planner_node.py is the central coordinator and the only file that directly interacts with all the helper modules. It uses task_client.py to get start and goal from /get_task, uses planner_core.py to load the cave map and compute a safe pruned path, uses controller.py to convert the current waypoint into a Twist command, and uses marker_helper.py to visualize the planner state in RViz. The whole package is organized so the node acts like a state machine: get task, plan once, wait for pose if needed, track the path, then stop at the goal.
