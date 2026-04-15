@@ -4,14 +4,20 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.actions import ExecuteProcess
+from launch.actions import IncludeLaunchDescription
+from launch.substitutions import PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
     assignment_share_dir = get_package_share_directory('ras598_assignment_2')
+
     map_yaml_path = os.path.join(assignment_share_dir, 'map.yaml')
     cave_image_path = os.path.join(assignment_share_dir, 'cave_filled.png')
+
     grading_scout_path = os.path.join(assignment_share_dir, 'grading_scout.py')
 
     map_server_node = Node(
@@ -43,16 +49,37 @@ def generate_launch_description():
         executable='planner_node',
         name='planner_node',
         output='screen',
-        parameters=[
-            {'map_image_path': cave_image_path}
-        ]
+        parameters=[{'map_image_path': cave_image_path}],
+    )
+
+    stage_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution([
+                FindPackageShare('stage_ros2'),
+                'launch',
+                'stage.launch.py'
+            ])
+        ),
+        launch_arguments={'world': 'cave'}.items(),
+    )
+
+    rviz_config_path = '/ras598_assignment_2/planning.rviz'
+
+    rviz_node = Node(
+        package='rviz2',
+        executable='rviz2',
+        name='rviz2',
+        output='screen',
+        arguments=['-d', rviz_config_path],
     )
 
     return LaunchDescription([
+        stage_launch,
+        planner_node,
+        rviz_node,
         map_server_node,
         lifecycle_manager_node,
-        grading_scout_node,
-        planner_node
+        grading_scout_node
     ])
 
 
