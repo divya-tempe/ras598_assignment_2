@@ -63,7 +63,7 @@ def generate_launch_description():
         launch_arguments={'world': 'cave'}.items(),
     )
 
-    rviz_config_path = '/ras598_assignment_2/planning.rviz'
+    rviz_config_path = 'rviz2 -d "/home/eva/Downloads/Git Repo/planning.rviz'
 
     rviz_node = Node(
         package='rviz2',

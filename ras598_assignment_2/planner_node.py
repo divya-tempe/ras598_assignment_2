@@ -100,11 +100,11 @@ class PlannerNode(Node):
         )
 
         self.path_controller = PathController(
-            linear_speed=1.6,
-            angular_gain=1.8,
-            max_linear_speed=1.6,
-            max_angular_speed=2.0,
-            waypoint_tolerance=0.3,
+            linear_speed=1.0, #1.0
+            angular_gain=2.6, #2.0
+            max_linear_speed=1.0, #1.0
+            max_angular_speed=2.6, #2.0
+            waypoint_tolerance=1.2, #1.2  => 20.72 energy
             goal_tolerance=0.2,
             heading_threshold=0.5,
             heading_deadband=0.05
@@ -466,6 +466,7 @@ class PlannerNode(Node):
         # --------------------------------------------------------------
         # TRACKING_PATH
         # --------------------------------------------------------------
+
         if self.state == self.TRACKING_PATH:
             # Safety checks
             if not self.pose_received or not self.path_ready or len(self.pruned_path_world) == 0:
@@ -483,15 +484,7 @@ class PlannerNode(Node):
                 self.publish_visualization()
                 return
 
-            # Get the current target waypoint
-            # lookahead = 2
-            # target_index = min(
-            #     self.current_waypoint_index + lookahead,
-            #     len(self.pruned_path_world) - 1
-            # )
             current_target_world = self.pruned_path_world[self.current_waypoint_index]
-
-            
             if current_target_world is None:
                 self.goal_reached = True
                 self.state = self.GOAL_REACHED
@@ -499,15 +492,29 @@ class PlannerNode(Node):
                 self.publish_visualization()
                 return
 
-            # Compute and publish control command
+            # Compute and publish control command, using goal_tolerance for last waypoint
+            last_index = len(self.pruned_path_world) - 1
+            use_goal_tolerance = self.current_waypoint_index == last_index
             cmd = self.path_controller.compute_cmd(
                 self.current_pose_x,
                 self.current_pose_y,
                 self.current_yaw,
                 current_target_world[0],
-                current_target_world[1]
+                current_target_world[1],
+                use_goal_tolerance=use_goal_tolerance
             )
-
+            # If stopped at goal, mark as reached
+            if use_goal_tolerance and self.path_controller.goal_reached(
+                self.current_pose_x,
+                self.current_pose_y,
+                current_target_world[0],
+                current_target_world[1]
+            ):
+                self.goal_reached = True
+                self.state = self.GOAL_REACHED
+                self.stop_robot()
+                self.publish_visualization()
+                return
             self.cmd_vel_pub.publish(cmd)
             self.publish_visualization()
             return
@@ -523,23 +530,15 @@ class PlannerNode(Node):
     # Tracking helpers
     # ------------------------------------------------------------------
 
+
     def advance_waypoint_if_needed(self) -> None:
         """
         Advance to the next waypoint when the current one is reached.
 
-        Also checks if the final goal has been reached.
+        For the last waypoint, use goal_tolerance (goal_reached),
+        for all others, use waypoint_tolerance (waypoint_reached).
         """
         if self.goal_world is None or len(self.pruned_path_world) == 0:
-            return
-
-        # First check final goal condition.
-        if self.path_controller.goal_reached(
-            self.current_pose_x,
-            self.current_pose_y,
-            self.goal_world[0],
-            self.goal_world[1]
-        ):
-            self.goal_reached = True
             return
 
         # If current waypoint index is already past the path, treat as done.
@@ -547,19 +546,27 @@ class PlannerNode(Node):
             self.goal_reached = True
             return
 
+        last_index = len(self.pruned_path_world) - 1
         current_target = self.pruned_path_world[self.current_waypoint_index]
 
-        if self.path_controller.waypoint_reached(
-            self.current_pose_x,
-            self.current_pose_y,
-            current_target[0],
-            current_target[1]
-        ):
-            self.current_waypoint_index += 1
-
-            # If we advanced past the last waypoint, mark as complete.
-            if self.current_waypoint_index >= len(self.pruned_path_world):
+        if self.current_waypoint_index == last_index:
+            # For the last waypoint, use goal_reached (goal_tolerance)
+            if self.path_controller.goal_reached(
+                self.current_pose_x,
+                self.current_pose_y,
+                current_target[0],
+                current_target[1]
+            ):
                 self.goal_reached = True
+        else:
+            # For all other waypoints, use waypoint_reached (waypoint_tolerance)
+            if self.path_controller.waypoint_reached(
+                self.current_pose_x,
+                self.current_pose_y,
+                current_target[0],
+                current_target[1]
+            ):
+                self.current_waypoint_index += 1
 
     def get_current_target_waypoint(self):
         """

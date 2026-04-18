@@ -111,8 +111,8 @@ def make_start_marker(
 
     # Green for start
     marker.color.a = 1.0
-    marker.color.r = 0.0
-    marker.color.g = 1.0
+    marker.color.r = 1.0
+    marker.color.g = 0.0
     marker.color.b = 0.0
 
     return marker
@@ -173,9 +173,9 @@ def make_raw_path_marker(
 
     # Yellow for raw path
     marker.color.a = 1.0
-    marker.color.r = 1.0
+    marker.color.r = 0.0
     marker.color.g = 1.0
-    marker.color.b = 0.0
+    marker.color.b = 0.4
 
     for x, y in path_world:
         marker.points.append(make_point(x, y, 0.05))

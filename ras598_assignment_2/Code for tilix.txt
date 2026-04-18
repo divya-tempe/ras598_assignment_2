@@ -1,9 +1,15 @@
+ros2 pkg create ras598_assignment_2 --build-type ament_python --dependencies rclpy geometry_msgs visualization_msgs nav_msgs std_msgs
 cd ~/ros2_ws/src
 chmod +x ras598_assignment_2/planner_node.py
 colcon build --packages-select ras598_assignment_2
 source install/setup.bash
 
+paste file here:
+/home/eva/ros2_ws/src/install/ras598_assignment_2/share/ras598_assignment_2/grading_scout.py'
+
 Run your node (test)
+cd ros2_ws
+source install/setup.bash
 ros2 run ras598_assignment_2 planner_node
 Run using launch file
 ros2 launch ras598_assignment_2 planner_launch.py

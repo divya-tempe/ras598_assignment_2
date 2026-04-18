@@ -213,101 +213,46 @@ class PathController:
         current_y: float,
         current_yaw: float,
         target_x: float,
-        target_y: float
+        target_y: float,
+        use_goal_tolerance: bool = False
     ) -> Twist:
         """
         Compute a Twist command to move toward the current waypoint.
 
-        Controller behavior:
-        1. Compute distance and heading error to target
-        2. If very close to target, stop
-        3. If heading error is large, rotate first
-        4. If heading error is smaller, move forward and correct heading
-
-        This helps reduce unnecessary curved motion and keeps the logic
-        easy to explain.
-
-        Args:
-            current_x: robot x position
-            current_y: robot y position
-            current_yaw: robot heading angle in radians
-            target_x: target waypoint x
-            target_y: target waypoint y
-
-        Returns:
-            Twist command
+        If use_goal_tolerance is True, use goal_tolerance for stopping;
+        otherwise, use waypoint_tolerance.
         """
         cmd = Twist()
 
-        # --------------------------------------------------------------
-        # Step 1: compute distance and heading error
-        # --------------------------------------------------------------
         distance_error = self.distance_to_point(
             current_x, current_y, target_x, target_y
         )
-
         desired_heading = self.heading_to_point(
             current_x, current_y, target_x, target_y
         )
-
         heading_error = self.normalize_angle(desired_heading - current_yaw)
-
-        # Small heading errors are ignored to reduce oscillation/jitter.
         if abs(heading_error) < self.heading_deadband:
             heading_error = 0.0
 
-        # --------------------------------------------------------------
-        # Step 2: if already close enough to target, stop
-        # --------------------------------------------------------------
-        if distance_error <= self.waypoint_tolerance:
-            cmd.linear.x = 0.8
-            cmd.angular.z = 1.8
-            return cmd
-            #return self.make_stop_cmd()
+        tolerance = self.goal_tolerance if use_goal_tolerance else self.waypoint_tolerance
+        if distance_error <= tolerance:
+            return self.make_stop_cmd()
 
-        # --------------------------------------------------------------
-        # Step 3: compute angular velocity
-        # --------------------------------------------------------------
         angular_z = self.angular_gain * heading_error
         angular_z = self.clamp(
             angular_z,
             -self.max_angular_speed,
             self.max_angular_speed
         )
-
-        # --------------------------------------------------------------
-        # Step 4: rotate-first logic
-        #
-        # If heading error is large, do not drive forward yet.
-        # This reduces wide arcs and makes behavior easier to tune.
-        # --------------------------------------------------------------
         if abs(heading_error) > self.heading_threshold:
-            cmd.linear.x = 0.8
+            cmd.linear.x = 0.0
             cmd.angular.z = angular_z
             return cmd
 
-        # --------------------------------------------------------------
-        # Step 5: move-forward logic
-        #
-        # When roughly aligned:
-        # - move forward
-        # - still apply angular correction
-        #
-        # To reduce overshoot and jitter:
-        # - scale linear speed down slightly when heading error grows
-        # - scale linear speed down when close to the waypoint
-        # --------------------------------------------------------------
-
-        # Reduce forward speed if there is still some heading error.
         heading_scale = max(0.2, 1.0 - abs(heading_error) / self.heading_threshold)
-
-        # Slow down near the waypoint to reduce overshoot.
         distance_scale = min(1.0, distance_error / 1.0)
-
         linear_x = self.linear_speed * heading_scale * distance_scale
         linear_x = self.clamp(linear_x, 0.0, self.max_linear_speed)
-
         cmd.linear.x = linear_x
         cmd.angular.z = angular_z
-
         return cmd
